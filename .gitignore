@@ -1,0 +1,7 @@
+.env
+.env.*
+
+/runner/config/*
+!/runner/config/.gitkeep
+
+.DS_Store

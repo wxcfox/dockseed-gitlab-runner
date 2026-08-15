@@ -1,0 +1,15 @@
+name: dockseed-gitlab-runner
+
+services:
+  dockseed-gitlab-runner:
+    image: gitlab/gitlab-runner:alpine-v19.2.1
+    container_name: dockseed-gitlab-runner
+    restart: unless-stopped
+    privileged: false
+    volumes:
+      - ./runner/config:/etc/gitlab-runner
+      # 仅 Runner manager 使用宿主 Docker；Job 容器不会继承这个挂载。
+      - /var/run/docker.sock:/var/run/docker.sock
+    extra_hosts:
+      - "host.docker.internal=host-gateway"
+    stop_grace_period: 1m
