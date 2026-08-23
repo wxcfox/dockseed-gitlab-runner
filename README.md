@@ -1,6 +1,6 @@
 # DockSeed GitLab Runner
 
-使用 Docker executor 运行独立的 GitLab Runner。镜像固定为 `gitlab/gitlab-runner:alpine-v19.2.1`，与 GitLab CE 19.2.x 保持相同 major/minor，并支持 Apple Silicon。
+使用 Docker executor 运行独立的 GitLab Runner。镜像固定为 `gitlab/gitlab-runner:alpine-v19.3.0`，与 GitLab CE 19.3.x 保持相同 major/minor，并支持 Apple Silicon。
 
 ## 职责边界
 
@@ -49,6 +49,18 @@
 ```
 
 `status` 只显示本地服务状态，`verify` 才检查 GitLab 连接。完整命令运行 `./start.sh help` 查看；连接异常时使用 `./start.sh logs`，`stop` 会保留注册配置和缓存。
+
+## 升级 Runner
+
+Runner 的 major/minor 应与 GitLab 保持一致。先在 GitLab UI 暂停 Runner 并等待现有 Job 结束，再更新 `docker-compose.yml` 中固定的镜像版本，然后执行：
+
+```bash
+docker compose pull dockseed-gitlab-runner
+./start.sh up
+./start.sh verify
+```
+
+`./start.sh up` 会使用新镜像重建 Runner manager；宿主机上的 `runner/config/` 与 Docker cache volumes 均会保留，不需要重新注册。验证完成后在 GitLab UI 恢复 Runner，并运行一个实际 CI Job。
 
 ## URL 与可选本机链路
 
@@ -119,7 +131,7 @@ Job 默认不挂载该 socket、保持 `privileged = false`，并只配置 `/cac
 
 ## 官方参考
 
-- [官方镜像 `alpine-v19.2.1`](https://hub.docker.com/r/gitlab/gitlab-runner/tags?name=alpine-v19.2.1)
+- [官方镜像 `alpine-v19.3.0`](https://hub.docker.com/r/gitlab/gitlab-runner/tags?name=alpine-v19.3.0)
 - [Runner authentication token 工作流](https://docs.gitlab.com/ci/runners/new_creation_workflow/)
 - [在 Docker 中运行 Runner](https://docs.gitlab.com/runner/install/docker/)
 - [高级配置与断连重试](https://docs.gitlab.com/runner/configuration/advanced-configuration/)

@@ -2,7 +2,7 @@ name: dockseed-gitlab-runner
 
 services:
   dockseed-gitlab-runner:
-    image: gitlab/gitlab-runner:alpine-v19.2.1
+    image: gitlab/gitlab-runner:alpine-v19.3.0
     container_name: dockseed-gitlab-runner
     restart: unless-stopped
     privileged: false
