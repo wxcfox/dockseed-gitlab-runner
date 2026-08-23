@@ -5,6 +5,7 @@ umask 077
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 COMPOSE_FILE="$ROOT_DIR/docker-compose.yml"
+VERSION_FILE="$ROOT_DIR/version.env"
 RUNNER_DIR="$ROOT_DIR/runner"
 CONFIG_DIR="$RUNNER_DIR/config"
 CONFIG_FILE="$CONFIG_DIR/config.toml"
@@ -14,7 +15,7 @@ SERVICE_NAME="dockseed-gitlab-runner"
 
 JOB_IMAGE="alpine:3.22"
 
-readonly ROOT_DIR COMPOSE_FILE RUNNER_DIR CONFIG_DIR
+readonly ROOT_DIR COMPOSE_FILE VERSION_FILE RUNNER_DIR CONFIG_DIR
 readonly CONFIG_FILE SYSTEM_ID_FILE REGISTER_LOCK SERVICE_NAME
 readonly JOB_IMAGE
 
@@ -34,7 +35,7 @@ dockseed-gitlab-runner
   help      显示帮助；不读取配置，也不检查 Docker
   register --url <GitLab URL> [--clone-url <clone URL>]
             隐藏读取 glrt- token 并注册一个 Runner
-  up        启动 Runner；只检查本地配置，不探测 GitLab
+  up        按 version.env 启动或更新 Runner
   status    查看本地 Runner 容器状态
   verify    检查 Runner 与 GitLab 的连接和注册
   logs      显示最近 200 行日志并持续跟随
@@ -86,7 +87,12 @@ valid_url() {
 }
 
 compose() {
-  docker compose --project-name "$SERVICE_NAME" --env-file /dev/null -f "$COMPOSE_FILE" "$@"
+  [[ -f "$VERSION_FILE" && ! -L "$VERSION_FILE" ]] || \
+    die "version.env 缺失或不是普通文件"
+  (
+    unset GITLAB_RUNNER_VERSION
+    docker compose --project-name "$SERVICE_NAME" --env-file "$VERSION_FILE" -f "$COMPOSE_FILE" "$@"
+  )
 }
 
 tighten_permissions() {
