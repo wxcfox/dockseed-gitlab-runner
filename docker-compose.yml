@@ -2,7 +2,7 @@ name: dockseed-gitlab-runner
 
 services:
   dockseed-gitlab-runner:
-    image: gitlab/gitlab-runner:alpine-v19.3.0
+    image: gitlab/gitlab-runner:alpine-v${GITLAB_RUNNER_VERSION:?请在 version.env 中配置 GITLAB_RUNNER_VERSION}
     container_name: dockseed-gitlab-runner
     restart: unless-stopped
     privileged: false
@@ -12,4 +12,5 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     extra_hosts:
       - "host.docker.internal=host-gateway"
-    stop_grace_period: 1m
+    stop_signal: SIGQUIT
+    stop_grace_period: 1h
