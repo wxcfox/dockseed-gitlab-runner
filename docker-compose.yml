@@ -2,7 +2,7 @@ name: dockseed-gitlab-runner
 
 services:
   dockseed-gitlab-runner:
-    image: gitlab/gitlab-runner:alpine-v${GITLAB_RUNNER_VERSION:?请在 version.env 中配置 GITLAB_RUNNER_VERSION}
+    image: gitlab/gitlab-runner:alpine-v${GITLAB_RUNNER_VERSION:?请在 .env 中配置 GITLAB_RUNNER_VERSION}
     container_name: dockseed-gitlab-runner
     restart: unless-stopped
     privileged: false
