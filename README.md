@@ -4,7 +4,7 @@
 
 ## 配置与数据
 
-- `version.env`：Runner 镜像版本，纳入版本控制。
+- `.env`：Runner 镜像版本和全局 Job 并发数；从 `.env.example` 复制且不提交。
 - `runner/config/`：注册信息、token 和 system ID，运行时生成且不会提交到 Git。
 - `/cache`：Runner 管理的 Docker cache volumes。
 
@@ -13,6 +13,15 @@
 ## 首次使用
 
 需要 Docker Compose v2，并确保 Runner manager 和 Job 容器可以访问 GitLab 与代码仓库。
+
+复制配置模板并按需修改 `.env`：
+
+```bash
+cp .env.example .env
+chmod 600 .env
+```
+
+`RUNNER_CONCURRENT` 必须为正整数，表示 Runner manager 同时执行的最大 Job 数。提高并发数前，请确认宿主机资源充足。
 
 先在 GitLab 创建 project、group 或 instance Runner，设置明确的 tag，并取得 `glrt-` authentication token，然后执行：
 
@@ -24,9 +33,9 @@
 
 `register` 会隐藏读取 token；已有注册配置时不会覆盖或追加 Runner。其他命令和可选参数运行 `./start.sh help` 查看。
 
-## 升级与回退
+## 调整版本或并发数
 
-修改 `version.env` 中的版本，然后启动：
+修改 `.env` 中的镜像版本或 `RUNNER_CONCURRENT`，然后启动：
 
 ```bash
 ./start.sh up

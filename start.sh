@@ -5,7 +5,7 @@ umask 077
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 COMPOSE_FILE="$ROOT_DIR/docker-compose.yml"
-VERSION_FILE="$ROOT_DIR/version.env"
+ENV_FILE="$ROOT_DIR/.env"
 RUNNER_DIR="$ROOT_DIR/runner"
 CONFIG_DIR="$RUNNER_DIR/config"
 CONFIG_FILE="$CONFIG_DIR/config.toml"
@@ -15,7 +15,7 @@ SERVICE_NAME="dockseed-gitlab-runner"
 
 JOB_IMAGE="alpine:3.22"
 
-readonly ROOT_DIR COMPOSE_FILE VERSION_FILE RUNNER_DIR CONFIG_DIR
+readonly ROOT_DIR COMPOSE_FILE ENV_FILE RUNNER_DIR CONFIG_DIR
 readonly CONFIG_FILE SYSTEM_ID_FILE REGISTER_LOCK SERVICE_NAME
 readonly JOB_IMAGE
 
@@ -35,7 +35,7 @@ dockseed-gitlab-runner
   help      显示帮助；不读取配置，也不检查 Docker
   register --url <GitLab URL> [--clone-url <clone URL>]
             隐藏读取 glrt- token 并注册一个 Runner
-  up        按 version.env 启动或更新 Runner
+  up        按 .env 中的镜像版本和并发数启动或更新 Runner
   status    查看本地 Runner 容器状态
   verify    检查 Runner 与 GitLab 的连接和注册
   logs      显示最近 200 行日志并持续跟随
@@ -87,13 +87,27 @@ valid_url() {
 }
 
 compose() {
-  [[ -f "$VERSION_FILE" && ! -L "$VERSION_FILE" ]] || \
-    die "version.env 缺失或不是普通文件"
+  [[ -f "$ENV_FILE" && ! -L "$ENV_FILE" ]] || \
+    die "请先复制 .env.example 为 .env"
   (
-    unset GITLAB_RUNNER_VERSION
-    docker compose --project-name "$SERVICE_NAME" --env-file "$VERSION_FILE" -f "$COMPOSE_FILE" "$@"
+    unset GITLAB_RUNNER_VERSION RUNNER_CONCURRENT
+    docker compose --project-name "$SERVICE_NAME" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
   )
 }
+
+# GitLab Runner 的全局并发数只从 config.toml 读取。
+set_runner_concurrent() (
+  local concurrent="$1" backup="$CONFIG_FILE.bak"
+
+  grep -qx "concurrent = $concurrent" "$CONFIG_FILE" && return
+  grep -qE '^concurrent[[:space:]]*=' "$CONFIG_FILE" || \
+    die "config.toml 缺少 concurrent 配置"
+  trap 'rm -f "$backup"' EXIT
+  LC_ALL=C sed -i.bak -E \
+    "s/^concurrent[[:space:]]*=.*/concurrent = $concurrent/" "$CONFIG_FILE"
+  tighten_permissions
+  log "Runner 并发数已更新为 $concurrent"
+)
 
 tighten_permissions() {
   local path
@@ -230,6 +244,7 @@ command_register() {
   reject_existing_config
 
   check_docker
+  compose config --quiet
   [[ -t 0 ]] || die "register 必须在交互式终端中运行，以便隐藏 token 输入"
 
   set +x
@@ -268,12 +283,16 @@ command_register() {
 }
 
 command_up() {
-  local parse_output
+  local parse_output runner_concurrent
 
   require_no_args up "$@"
   ensure_layout
   validate_config
   check_docker
+  runner_concurrent="$(compose config --environment | sed -n 's/^RUNNER_CONCURRENT=//p')"
+  [[ "$runner_concurrent" =~ ^[1-9][0-9]*$ ]] || \
+    die "请在 .env 中将 RUNNER_CONCURRENT 配置为正整数"
+  set_runner_concurrent "$runner_concurrent"
   if ! parse_output="$(run_runner_command list --config /etc/gitlab-runner/config.toml)"; then
     [[ -z "$parse_output" ]] || printf '%s\n' "$parse_output" >&2
     die "Runner 本地配置解析失败"
