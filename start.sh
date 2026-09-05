@@ -383,7 +383,7 @@ command_register() {
   if ((privileged == 1)); then
     log "警告：$runner_name 的 Job 容器将以 privileged 运行，等同于宿主机 root，只给可信项目用"
   fi
-  log "正在注册 $runner_name；GitLab 必须在线，token 通过标准输入传入且不会进入 Docker 命令参数"
+  log "正在注册 ${runner_name}；GitLab 必须在线，token 通过标准输入传入且不会进入 Docker 命令参数"
   # gitlab-runner register 会加载已有 config.toml 并追加一个 [[runners]] 段，全局配置原样保留。
   set +e
   printf '%s\n' "$runner_token" | \
@@ -418,10 +418,10 @@ command_register() {
     fi
     validate_config
   ); then
-    die "GitLab 侧已注册 $runner_name，但本地配置未完成；请运行 ./start.sh unregister --name $runner_name 回退，或手动检查 config.toml"
+    die "GitLab 侧已注册 ${runner_name}，但本地配置未完成；请运行 ./start.sh unregister --name $runner_name 回退，或手动检查 config.toml"
   fi
   release_config_lock
-  log "已注册 $runner_name，当前 Runner：$(list_runner_names | paste -sd ' ' -)"
+  log "已注册 ${runner_name}，当前 Runner：$(list_runner_names | paste -sd ' ' -)"
   log "下一步：./start.sh up，然后 ./start.sh verify"
 }
 
@@ -463,19 +463,19 @@ command_unregister() {
   check_docker
   compose config --quiet
 
-  log "正在从 GitLab 注销 $runner_name；GitLab 必须在线"
+  log "正在从 GitLab 注销 ${runner_name}；GitLab 必须在线"
   # gitlab-runner unregister 先调用 GitLab API 注销，成功后才从 config.toml 删除该段。
   run_runner_command unregister --name "$runner_name" || \
     die "注销失败；请确认 GitLab 在线且该 Runner 的 token 仍有效。若 GitLab 侧已删除该 Runner，请手动从 config.toml 删除对应 [[runners]] 段"
   ! runner_exists "$runner_name" || \
-    die "gitlab-runner unregister 已返回，但 config.toml 中仍有 $runner_name，请手动检查"
+    die "gitlab-runner unregister 已返回，但 config.toml 中仍有 ${runner_name}，请手动检查"
 
   unmark_privileged "$runner_name"
   if list_runner_names | grep -q .; then
     validate_config
-    log "已注销 $runner_name，剩余 Runner：$(list_runner_names | paste -sd ' ' -)"
+    log "已注销 ${runner_name}，剩余 Runner：$(list_runner_names | paste -sd ' ' -)"
   else
-    log "已注销 $runner_name；config.toml 中已没有 Runner，如需继续使用请重新 register"
+    log "已注销 ${runner_name}；config.toml 中已没有 Runner，如需继续使用请重新 register"
   fi
   release_config_lock
   log "GitLab UI 中的 Runner 记录如不再需要，请在 UI 中删除"
