@@ -16,12 +16,12 @@ PRIVILEGED_FILE="$CONFIG_DIR/.privileged_runners"
 CONFIG_LOCK="$CONFIG_DIR/.register.lock"
 SERVICE_NAME="dockseed-gitlab-runner"
 
-JOB_IMAGE="alpine:3.22"
+DEFAULT_JOB_IMAGE="alpine:3.22"
 RUNNER_NAME_PATTERN='^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$'
 
 readonly ROOT_DIR COMPOSE_FILE ENV_FILE RUNNER_DIR CONFIG_DIR
 readonly CONFIG_FILE SYSTEM_ID_FILE PRIVILEGED_FILE CONFIG_LOCK SERVICE_NAME
-readonly JOB_IMAGE RUNNER_NAME_PATTERN
+readonly DEFAULT_JOB_IMAGE RUNNER_NAME_PATTERN
 
 log() { printf '[runner] %s\n' "$*"; }
 die() { printf '[runner] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -38,10 +38,10 @@ dockseed-gitlab-runner
 
 命令
   help      显示帮助；不读取配置，也不检查 Docker
-  register --url <GitLab URL> --name <Runner 名> [--privileged] [--clone-url <clone URL>]
+  register --url <GitLab URL> --name <Runner 名> [--privileged] [--clone-url <clone URL>] [--docker-image <镜像>]
             隐藏读取 glrt- token，向 config.toml 追加一个 [[runners]] 段
   unregister --name <Runner 名>
-            从 GitLab 侧注销该 Runner，并从 config.toml 删除对应段；其他段不动
+            注销该 Runner 在本机的 manager，并从 config.toml 删除对应段
   up        按 .env 中的镜像版本和并发数启动或更新 Runner manager（管理全部 Runner）
   status    查看本地 Runner 容器状态
   verify    检查全部 Runner 与 GitLab 的连接和注册
@@ -49,11 +49,12 @@ dockseed-gitlab-runner
   stop      停止 Runner manager，保留注册配置和缓存
 
 说明
-  --url 使用 GitLab UI 创建 Runner 后 Step 1 显示的 URL。
+  --url 使用 GitLab UI 创建 Runner 后显示的 URL。
   --name 是本机 config.toml 中的 Runner 名，同一名字只能注册一次；重复注册请先 unregister。
   --privileged 让该 Runner 的 Job 容器以 privileged 运行，用于 Docker-in-Docker 构建镜像；
     等同于宿主机 root，只给可信项目用。默认关闭。
   --clone-url 默认不设置；仅当 Job 需要不同的内部克隆地址时显式提供。
+  --docker-image 设置该 Runner 的默认 Job 镜像，默认为 alpine:3.22；CI 中的 image 优先。
   register / unregister 时 GitLab 必须在线；注册后 Runner 可以先于 GitLab 启动。
   token 不要手动写入环境文件或命令行；注册后仅由 Runner 保存到 config.toml。
   RUNNER_CONCURRENT 是所有 Runner 合计的并发上限，register 不会改动它。
@@ -68,8 +69,13 @@ require_no_args() {
 
 check_docker() {
   command -v docker >/dev/null 2>&1 || die "缺少 docker"
-  docker compose version >/dev/null 2>&1 || die "需要 Docker Compose v2"
-  docker info >/dev/null 2>&1 || die "Docker 不可用，请先启动 Docker Desktop"
+  docker compose version >/dev/null 2>&1 || die "需要 Docker Compose 插件（docker compose）"
+  docker info >/dev/null 2>&1 || die "Docker 不可用，请检查 Docker Engine 或 Docker Desktop 是否运行及当前用户的访问权限"
+}
+
+check_compose_environment() {
+  docker compose config --help | grep -F -- '--environment' >/dev/null || \
+    die "当前 Docker Compose 不支持 config --environment，请升级 Compose 插件后再注册或启动 Runner"
 }
 
 valid_url() {
@@ -104,7 +110,7 @@ compose() {
   [[ -f "$ENV_FILE" && ! -L "$ENV_FILE" ]] || \
     die "请先复制 .env.example 为 .env"
   (
-    unset GITLAB_RUNNER_VERSION RUNNER_CONCURRENT
+    unset GITLAB_RUNNER_IMAGE_REPOSITORY GITLAB_RUNNER_VERSION RUNNER_CONCURRENT
     docker compose --project-name "$SERVICE_NAME" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
   )
 }
@@ -169,7 +175,6 @@ list_runner_names() {
   [[ -s "$CONFIG_FILE" ]] || return 0
   awk '
     /^[[:space:]]*\[\[runners\]\][[:space:]]*(#.*)?$/ { section="runner"; next }
-    /^[[:space:]]*\[runners\./ { section="sub"; next }
     /^[[:space:]]*\[/ { section="other"; next }
     section == "runner" && match($0, /^[[:space:]]*name[[:space:]]*=[[:space:]]*"[^"]*"/) {
       line=substr($0, RSTART, RLENGTH)
@@ -264,7 +269,8 @@ redact_output() {
 run_runner_command() {
   local status=0
 
-  compose run --rm --no-deps -T "$SERVICE_NAME" "$@" 2>&1 | redact_output || status="$?"
+  # 非交互命令不读取调用方 stdin，避免通过管道执行脚本时吞掉后续命令。
+  compose run --rm --no-deps -T "$SERVICE_NAME" "$@" </dev/null 2>&1 | redact_output || status="$?"
   tighten_permissions || return 1
   return "$status"
 }
@@ -272,18 +278,19 @@ run_runner_command() {
 command_register() {
   local runner_token="" status runner_url="" clone_url="" runner_name="" option value
   local seen_url=0 seen_clone_url=0 seen_name=0 privileged=0 previous_concurrent
+  local job_image="$DEFAULT_JOB_IMAGE" seen_job_image=0
   local -a register_args
 
   while (($# > 0)); do
     option="$1"
     case "$option" in
-      --url|--clone-url|--name)
+      --url|--clone-url|--name|--docker-image)
         (($# >= 2)) && [[ -n "$2" && "$2" != -* ]] || \
           die "register 的 $option 缺少参数"
         value="$2"
         shift 2
         ;;
-      --url=*|--clone-url=*|--name=*)
+      --url=*|--clone-url=*|--name=*|--docker-image=*)
         value="${option#*=}"
         option="${option%%=*}"
         [[ -n "$value" ]] || die "register 的 $option 缺少参数"
@@ -315,14 +322,21 @@ command_register() {
         runner_name="$value"
         seen_name=1
         ;;
+      --docker-image)
+        ((seen_job_image == 0)) || die "register 的 --docker-image 不得重复"
+        job_image="$value"
+        seen_job_image=1
+        ;;
     esac
   done
 
-  ((seen_url == 1)) || die "register 必须提供 --url <GitLab UI Step 1 URL>"
+  ((seen_url == 1)) || die "register 必须提供 --url <GitLab URL>"
   ((seen_name == 1)) || die "register 必须提供 --name <Runner 名>，例如 shared-docker 或 container-build"
   valid_url "$runner_url" || die "--url 必须是有效的 http:// 或 https:// URL"
   valid_runner_name "$runner_name" || \
     die "--name 只能包含字母、数字、. _ -，以字母或数字开头，最长 63 个字符"
+  [[ "$job_image" != -* && "$job_image" != *[[:space:]]* ]] || \
+    die "--docker-image 不得以 - 开头或包含空白字符"
   if ((seen_clone_url == 1)); then
     valid_url "$clone_url" || die "--clone-url 必须是有效的 http:// 或 https:// URL"
   fi
@@ -337,7 +351,7 @@ command_register() {
   register_args+=(
     --name "$runner_name"
     --executor docker
-    --docker-image "$JOB_IMAGE"
+    --docker-image "$job_image"
     --unhealthy-requests-limit 3
     --unhealthy-interval 30s
   )
@@ -356,14 +370,12 @@ command_register() {
   )
 
   ensure_layout
-  ! runner_exists "$runner_name" || \
-    die "config.toml 中已存在名为 $runner_name 的 Runner；如需重新注册，请先运行 ./start.sh unregister --name $runner_name"
-
   acquire_config_lock
   ! runner_exists "$runner_name" || \
     die "config.toml 中已存在名为 $runner_name 的 Runner；如需重新注册，请先运行 ./start.sh unregister --name $runner_name"
 
   check_docker
+  check_compose_environment
   compose config --quiet
   [[ -t 0 ]] || die "register 必须在交互式终端中运行，以便隐藏 token 输入"
 
@@ -394,15 +406,13 @@ command_register() {
     redact_output
   status="${PIPESTATUS[1]}"
   set -e
-  runner_token=""
   unset runner_token
   tighten_permissions
 
   ((status == 0)) || \
     die "注册失败；请确认 GitLab 在线、URL 可达且 token 有效。若已写入 config.toml，请先检查，不要直接重试"
 
-  # 到这里 GitLab 侧已经注册成功；以下任一步失败都意味着本地状态不完整，
-  # 统一提示用 unregister 回退。放在子 shell 里，内部的 die 不会跳过下面的提示。
+  # 注册后在子 shell 内校验，使 die 也能触发外层的回退提示。
   if ! (
     runner_exists "$runner_name" || \
       die "gitlab-runner register 已返回，但 config.toml 中没有 $runner_name"
@@ -412,7 +422,7 @@ command_register() {
       # 同名 Runner 曾以 privileged 注册、后被手动删段时标记会残留，普通注册要清掉它。
       unmark_privileged "$runner_name"
     fi
-    # 追加不应改动全局 concurrent；万一变了，恢复为注册前的值。
+    # 保持追加注册前的全局并发数。
     if [[ -n "$previous_concurrent" && "$(read_concurrent)" != "$previous_concurrent" ]]; then
       set_runner_concurrent "$previous_concurrent"
     fi
@@ -463,8 +473,8 @@ command_unregister() {
   check_docker
   compose config --quiet
 
-  log "正在从 GitLab 注销 ${runner_name}；GitLab 必须在线"
-  # gitlab-runner unregister 先调用 GitLab API 注销，成功后才从 config.toml 删除该段。
+  log "正在注销 ${runner_name} 在本机的 manager；GitLab 必须在线"
+  # glrt- 工作流仅注销该 manager，GitLab UI 中的 Runner 记录仍保留。
   run_runner_command unregister --name "$runner_name" || \
     die "注销失败；请确认 GitLab 在线且该 Runner 的 token 仍有效。若 GitLab 侧已删除该 Runner，请手动从 config.toml 删除对应 [[runners]] 段"
   ! runner_exists "$runner_name" || \
@@ -488,6 +498,7 @@ command_up() {
   ensure_layout
   validate_config
   check_docker
+  check_compose_environment
   runner_concurrent="$(compose config --environment | sed -n 's/^RUNNER_CONCURRENT=//p')"
   [[ "$runner_concurrent" =~ ^[1-9][0-9]*$ ]] || \
     die "请在 .env 中将 RUNNER_CONCURRENT 配置为正整数"
