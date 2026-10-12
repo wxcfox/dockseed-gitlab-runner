@@ -60,9 +60,33 @@ chmod 600 .env
 
 `up`、`verify`、`status`、`logs`、`stop` 都作用于 manager 管理的全部 Runner。其他命令和可选参数运行 `./start.sh help` 查看。
 
-`verify` 只检查与 GitLab 的连接和注册。要确认可以执行任务，还需在使用该 Runner 的项目中运行一次 CI，验证代码克隆、镜像拉取及实际构建。
+`verify` 只检查与 GitLab 的连接和注册。要确认可以执行任务，还需在使用该 Runner 的项目中运行一次 CI，验证代码克隆、镜像拉取及实际构建，见下一节。
 
-构建镜像的 Job 在 `.gitlab-ci.yml` 中用 `tags` 选中 privileged Runner，并使用 `image: docker:cli` 加 `services: [docker:dind]` 的标准 Docker-in-Docker 写法。
+## 在项目中使用 Runner
+
+Runner 主动向 GitLab 拉取 Job，项目接入只需在 GitLab 中配置，不需要登录 Runner 所在的机器。Job 需要的凭据（如部署密钥）通过 CI/CD Variables 提供，不依赖宿主机上的账号或文件。
+
+1. 确认项目可用该 Runner：group Runner 对该 group 及其子 group 的项目生效，instance Runner 对全部项目生效，需在项目 Settings → CI/CD → Runners 中保持对应开关开启；project Runner 需在项目中单独启用。
+2. 在 `.gitlab-ci.yml` 中用 `tags` 选中 Runner，值须与 Runner 的标签一致。以上文示例标签为例：
+
+   ```yaml
+   test:
+     tags: [shared-docker]
+     script:
+       - echo "runs in the Runner's default image"
+
+   build-image:
+     image: docker:cli
+     services: [docker:dind]
+     tags: [container-build]
+     variables:
+       DOCKER_TLS_CERTDIR: "/certs"
+     script:
+       - docker build -t "example:$CI_COMMIT_SHORT_SHA" .
+   ```
+
+   不带 `tags` 的 Job 只会被勾选了「Run untagged jobs」的 Runner 执行，否则会一直 pending。
+3. 推送后查看 Job 日志，确认由预期的 Runner 执行，且代码克隆、镜像拉取和构建均成功。
 
 ## 注销 Runner
 
@@ -91,6 +115,8 @@ Runner manager 挂载了 `/var/run/docker.sock`，因此只应服务可信项目
 - `privileged = true` 只允许出现在注册时明确 `--privileged` 的段，这些段的名字记录在 `runner/config/.privileged_runners` 中。手改 `config.toml` 给其他 Runner 打开 privileged 会被拒绝启动。
 
 普通 Runner 的 Job 默认不挂载 Docker socket、不启用 privileged，并仅使用 `/cache`。
+
+tag 只用于选择 Runner，不限制使用者：可用该 Runner 的项目都能在 `.gitlab-ci.yml` 中写上它的 tag。privileged Runner 注册在 group 或 instance 级别时，范围内能修改 CI 配置的成员都能借此获得宿主机 root 权限。需要收紧时，将其改为只分配给可信项目的 project Runner。在 Runner 设置中勾选「Protected」可进一步限定只执行 protected 分支和 tag 的 Job，但它不限制项目范围：各项目的 Maintainer 自行管理保护规则，因此仍需信任所有可用该 Runner 的项目。
 
 不要提交或删除 `runner/config/`；GitLab 暂时离线时也无需重新注册。
 
