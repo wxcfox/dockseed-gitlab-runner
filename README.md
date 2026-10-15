@@ -5,6 +5,7 @@
 ## 配置与数据
 
 - `.env`：Runner manager 镜像仓库、版本和全局 Job 并发数；从 `.env.example` 复制且不提交。
+- `docker-compose.override.yml`：可选，本机专用的 Compose 配置（如为 Runner manager 添加 `extra_hosts`），存在时自动叠加且不提交；不要直接修改 `docker-compose.yml`。Job 容器的配置在 `config.toml` 中修改。
 - `runner/config/`：注册信息、token、system ID，以及记录哪些 Runner 以 privileged 注册的 `.privileged_runners`；运行时生成且不会提交到 Git。
 - `/cache`：Runner 管理的 Docker cache volumes。
 

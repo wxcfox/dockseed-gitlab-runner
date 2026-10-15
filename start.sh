@@ -5,6 +5,8 @@ umask 077
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 COMPOSE_FILE="$ROOT_DIR/docker-compose.yml"
+# 本机专用的 Compose 覆盖配置，可选且不提交。
+COMPOSE_OVERRIDE_FILE="$ROOT_DIR/docker-compose.override.yml"
 ENV_FILE="$ROOT_DIR/.env"
 RUNNER_DIR="$ROOT_DIR/runner"
 CONFIG_DIR="$RUNNER_DIR/config"
@@ -19,7 +21,7 @@ SERVICE_NAME="dockseed-gitlab-runner"
 DEFAULT_JOB_IMAGE="alpine:3.22"
 RUNNER_NAME_PATTERN='^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$'
 
-readonly ROOT_DIR COMPOSE_FILE ENV_FILE RUNNER_DIR CONFIG_DIR
+readonly ROOT_DIR COMPOSE_FILE COMPOSE_OVERRIDE_FILE ENV_FILE RUNNER_DIR CONFIG_DIR
 readonly CONFIG_FILE SYSTEM_ID_FILE PRIVILEGED_FILE CONFIG_LOCK SERVICE_NAME
 readonly DEFAULT_JOB_IMAGE RUNNER_NAME_PATTERN
 
@@ -107,11 +109,15 @@ valid_runner_name() {
 }
 
 compose() {
+  local -a compose_files=(-f "$COMPOSE_FILE")
+
   [[ -f "$ENV_FILE" && ! -L "$ENV_FILE" ]] || \
     die "请先复制 .env.example 为 .env"
+  # 显式 -f 会关闭 Compose 对 override 文件的自动加载，这里按 Compose 默认行为补回。
+  [[ ! -f "$COMPOSE_OVERRIDE_FILE" ]] || compose_files+=(-f "$COMPOSE_OVERRIDE_FILE")
   (
     unset GITLAB_RUNNER_IMAGE_REPOSITORY GITLAB_RUNNER_VERSION RUNNER_CONCURRENT
-    docker compose --project-name "$SERVICE_NAME" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
+    docker compose --project-name "$SERVICE_NAME" --env-file "$ENV_FILE" "${compose_files[@]}" "$@"
   )
 }
 
@@ -505,6 +511,8 @@ command_up() {
   set_runner_concurrent "$runner_concurrent"
   if ! parse_output="$(run_runner_command list --config /etc/gitlab-runner/config.toml)"; then
     [[ -z "$parse_output" ]] || printf '%s\n' "$parse_output" >&2
+    grep -q 'Error response from daemon' <<<"$parse_output" && \
+      die "Docker 无法创建预检容器（如镜像版本不存在），现有 Runner manager 容器未重建"
     die "Runner 本地配置解析失败"
   fi
   compose up -d --no-deps "$SERVICE_NAME"
